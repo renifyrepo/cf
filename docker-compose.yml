@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    environment:
+      # Replace with your local timezone, e.g., 'Asia/Manila'
+      - GENERIC_TIMEZONE=Asia/Manila
+      - TZ=Asia/Manila
+      # Enforce permissions to prevent security issues
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      #- **WEBHOOK_URL**=https://dev.events-ph.com/
+      # Ensure these are also set correctly
+      - N8N_HOST=dev.events-ph.com
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+volumes:
+  n8n_data:

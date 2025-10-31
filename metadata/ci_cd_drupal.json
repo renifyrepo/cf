@@ -1,0 +1,202 @@
+{
+  "name": "Drupal PR CI/CD Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "events": [
+          "pullRequest"
+        ],
+        "actions": [
+          "opened",
+          "synchronize"
+        ],
+        "authentication": "credentials",
+        "credentials": {
+          "githubApi": {
+            "id": "YOUR_GITHUB_CREDENTIALS_ID",
+            "name": "GitHub CI/CD Token"
+          }
+        }
+      },
+      "name": "📥 PR Listener (GitHub Trigger)",
+      "type": "n8n-nodes-base.githubTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const pull_request = $json.pull_request;\n\n// The branch name being merged\nconst branch_name = pull_request.head.ref;\n\nreturn [{\n    json: {\n        branch_name: branch_name,\n        // Optional: for better notification messages\n        pr_url: pull_request.html_url,\n        pr_number: pull_request.number\n    }\n}];"
+      },
+      "name": "⚙️ Extract Variables",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        480,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "command": "#!/bin/bash\\n\\n# --- VARIABLES ---\\n# N8N-injected variable from the previous Code node\\nBRANCH_NAME=\"{{ $json.branch_name }}\"\\n# --- MUST BE UPDATED ---\\nPROJECT_DIR=\"/var/www/drupal/ci_builds/{{ $json.branch_name }}\" \\nREPO_URL=\"git@github.com:your-org/your-repo.git\" \\n# -------------------------\\n\\n# --- CORE DRUPAL CI/CD PROCESS ---\\n\\necho \"Starting CI/CD process for branch: $BRANCH_NAME\"\\n\\n# 1. Setup/Update Environment (Clone if first time, or pull if already exists)\\nif [ ! -d \"$PROJECT_DIR\" ]; then\\n    echo \"Cloning repository...\"\\n    mkdir -p \"$PROJECT_DIR\"\\n    # Use --depth 1 for faster cloning if history is not needed\\n    git clone $REPO_URL \"$PROJECT_DIR\" || { echo \"Git clone failed\"; exit 1; }\\nfi\\n\\ncd \"$PROJECT_DIR\" || { echo \"Error: Failed to change directory to $PROJECT_DIR\"; exit 1; }\\n\\n# Checkout the specific branch and pull latest changes\\ngit fetch origin\\ngit checkout $BRANCH_NAME || { echo \"Git checkout failed\"; exit 1; }\\ngit pull origin $BRANCH_NAME || { echo \"Git pull failed\"; exit 1; }\\n\\n# 2. Dependency Management\\necho \"Running Composer install...\"\\ncomposer install --no-interaction --prefer-dist --optimize-autoloader || { echo \"Composer failed\"; exit 1; }\\n\\n# 3. Drupal Operations (Config & DB)\\n# Note: Ensure your environment has the correct database settings\\nDRUSH_PATH=\"./vendor/bin/drush\"\\n\\necho \"Running Drush commands (config and updates)...\"\\n# Clear cache first\\n$DRUSH_PATH cr || { echo \"Drush CR failed\"; exit 1; }\\n# Import configuration (essential for changes to take effect)\\n$DRUSH_PATH cim -y || { echo \"Drush CIM failed\"; exit 1; }\\n# Run database updates\\n$DRUSH_PATH updb -y || { echo \"Drush UPDB failed\"; exit 1; }\\n# Clear cache again\\n$DRUSH_PATH cr || { echo \"Drush CR failed\"; exit 1; }\\n\\n# 4. Automated Testing (Customize this to your specific test suite)\\necho \"Running PHPUnit tests...\"\\n# Example command - adjust the path/command to your test suite\\n./vendor/bin/phpunit -c web/core/phpunit.xml.dist modules/custom/your_module || { echo \"PHPUnit tests failed!\"; exit 1; }\\n\\necho \"CI/CD Build and Test successful for branch $BRANCH_NAME\"\\n# Success exit code\\nexit 0",
+        "authentication": "credentials",
+        "credentials": {
+          "sshCredential": {
+            "id": "YOUR_SSH_CREDENTIALS_ID",
+            "name": "Staging Server SSH"
+          }
+        }
+      },
+      "name": "🏃 Run Drupal CI Script",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        720,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "mode": "any",
+          "value": [
+            {
+              "value1": "={{$node[\"Run Drupal CI Script\"].json.exitCode}}",
+              "operation": "equalTo",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "✅ Check SSH Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        960,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "createCommitStatus",
+        "owner": "your-org",
+        "repository": "your-repo",
+        "commit": "={{$json.pull_request.head.sha}}",
+        "state": "success",
+        "description": "Drupal CI/CD tests passed successfully!",
+        "context": "n8n/ci-test"
+      },
+      "name": "🟢 Set PR Status (Success)",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [
+        1230,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "owner": "your-org",
+        "repository": "your-repo",
+        "issueNumber": "={{$json.pr_number}}",
+        "body": "🎉 **CI PASSED!** 🎉\n\nAll Composer, Drush, and PHPUnit checks passed successfully. This branch is ready for code review and merging."
+      },
+      "name": "🟢 Post PR Comment (Success)",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "createCommitStatus",
+        "owner": "your-org",
+        "repository": "your-repo",
+        "commit": "={{$json.pull_request.head.sha}}",
+        "state": "failure",
+        "description": "CI/CD tests failed. See details below.",
+        "context": "n8n/ci-test"
+      },
+      "name": "🔴 Set PR Status (Failure)",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [
+        1230,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "issueNumber": "={{$json.pr_number}}",
+        "body": "❌ **CI FAILED!** ❌\n\nThe Drupal build or tests failed for this branch. Please check the output below:\n\n```bash\n{{$node[\"Run Drupal CI Script\"].json.stderr}}\n```"
+      },
+      "name": "🔴 Post PR Comment (Failure)",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "📥 PR Listener (GitHub Trigger)": [
+      [
+        {
+          "node": "⚙️ Extract Variables",
+          "index": 0
+        }
+      ]
+    ],
+    "⚙️ Extract Variables": [
+      [
+        {
+          "node": "🏃 Run Drupal CI Script",
+          "index": 0
+        }
+      ]
+    ],
+    "🏃 Run Drupal CI Script": [
+      [
+        {
+          "node": "✅ Check SSH Status",
+          "index": 0
+        }
+      ]
+    ],
+    "✅ Check SSH Status": [
+      [
+        {
+          "node": "🟢 Set PR Status (Success)",
+          "index": 0
+        }
+      ],
+      [
+        {
+          "node": "🔴 Set PR Status (Failure)",
+          "index": 0
+        }
+      ]
+    ],
+    "🟢 Set PR Status (Success)": [
+      [
+        {
+          "node": "🟢 Post PR Comment (Success)",
+          "index": 0
+        }
+      ]
+    ],
+    "🔴 Set PR Status (Failure)": [
+      [
+        {
+          "node": "🔴 Post PR Comment (Failure)",
+          "index": 0
+        }
+      ]
+    ]
+  }
+}
